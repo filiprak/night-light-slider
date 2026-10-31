@@ -1,4 +1,5 @@
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { QuickSlider, SystemIndicator } from 'resource:///org/gnome/shell/ui/quickSettings.js';
@@ -165,10 +166,30 @@ export default class NightLightSliderExtension extends Extension {
     constructor(metadata) {
         super(metadata);
         this._indicator = null;
+        this._waitSourceId = 0;
     }
 
     enable() {
         extLog(`Extension enabled`);
+
+        // At login Quick Settings creates its indicators asynchronously, so the
+        // extension can be enabled before the Brightness indicator exists.
+        // Wait for it, otherwise the slider can't be placed next to it.
+        if (!quickSettings._brightness) {
+            this._waitSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                if (!quickSettings._brightness)
+                    return GLib.SOURCE_CONTINUE;
+                this._waitSourceId = 0;
+                this._addIndicator();
+                return GLib.SOURCE_REMOVE;
+            });
+            return;
+        }
+
+        this._addIndicator();
+    }
+
+    _addIndicator() {
         if(!this._indicator) {
             this._indicator = new Indicator();
         }
@@ -176,6 +197,10 @@ export default class NightLightSliderExtension extends Extension {
 
     disable() {
         extLog(`Extension disabled`);
+        if (this._waitSourceId) {
+            GLib.source_remove(this._waitSourceId);
+            this._waitSourceId = 0;
+        }
         if(this._indicator) {
             this._indicator.destroy();
             this._indicator = null;
